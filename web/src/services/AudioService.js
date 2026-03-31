@@ -18,6 +18,22 @@ export class AudioService {
         this.isMediaSourceSupported = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg');
         this.audioChunks = []; // Fallback for iOS Safari
         this.fallbackMode = false; // Track if we're using fallback mode
+        
+        // Visual debugging
+        this.debugCallback = null; // Callback to show status messages
+    }
+    
+    // Method to set debug callback for visual feedback
+    setDebugCallback(callback) {
+        this.debugCallback = callback;
+    }
+    
+    // Helper to show debug messages
+    debug(message) {
+        console.log('AudioService:', message);
+        if (this.debugCallback) {
+            this.debugCallback(message);
+        }
     }
 
     async streamAudio(text, voice, speed, onProgress) {
@@ -88,16 +104,17 @@ export class AudioService {
         
         // Check if MediaSource is supported (not available in iOS Safari)
         if (this.isMediaSourceSupported) {
-            console.log('AudioService: Using MediaSource API');
+            this.debug('Using MediaSource API');
             this.mediaSource = new MediaSource();
             this.audio.src = URL.createObjectURL(this.mediaSource);
             
             // Monitor for audio element errors
             this.audio.addEventListener('error', (e) => {
-                console.error('Audio error:', this.audio.error);
+                this.debug('Audio error: ' + JSON.stringify(this.audio.error));
             });
 
             this.audio.addEventListener('ended', () => {
+                this.debug('Audio ended');
                 this.dispatchEvent('ended');
             });
 
@@ -120,7 +137,7 @@ export class AudioService {
             });
         } else {
             // Fallback mode for iOS Safari
-            console.log('AudioService: Using fallback mode for iOS Safari');
+            this.debug('Using fallback mode for iOS Safari');
             this.fallbackMode = true;
             this.audioChunks = [];
             
@@ -128,36 +145,44 @@ export class AudioService {
                 // Process stream and collect chunks
                 this.processStreamFallback(stream, response, onProgress, estimatedChunks)
                     .then(() => {
+                        this.debug('Creating blob from chunks, total: ' + this.audioChunks.length);
+                        
                         // Create blob from collected chunks
                         const blob = new Blob(this.audioChunks, { type: 'audio/mpeg' });
                         const audioUrl = URL.createObjectURL(blob);
                         this.audio.src = audioUrl;
                         
+                        this.debug('Audio src set to blob URL');
+                        
                         this.audio.addEventListener('ended', () => {
+                            this.debug('Audio ended');
                             this.dispatchEvent('ended');
                         });
                         
                         this.audio.addEventListener('loadeddata', () => {
-                            // Audio is ready to play - update player state
+                            this.debug('Audio data loaded, readyState: ' + this.audio.readyState);
                             this.dispatchEvent('loadeddata');
-                            
-                            if (this.shouldAutoplay) {
-                                // Add a small delay for iOS Safari compatibility
-                                setTimeout(() => {
-                                    this.play();
-                                }, 100);
-                            }
                         });
                         
                         this.audio.addEventListener('loadedmetadata', () => {
-                            // Metadata is loaded - duration is available
+                            this.debug('Audio metadata loaded, duration: ' + this.audio.duration);
                             this.dispatchEvent('loadedmetadata');
                         });
                         
                         this.audio.addEventListener('canplay', () => {
-                            // Audio can be played
+                            this.debug('Audio can be played');
                             this.dispatchEvent('canplay');
                         });
+                        
+                        this.audio.addEventListener('error', (e) => {
+                            this.debug('Audio error: ' + JSON.stringify(this.audio.error));
+                        });
+                        
+                        // Dispatch a custom event to signal audio is ready
+                        setTimeout(() => {
+                            this.debug('Audio ready for playback');
+                            this.dispatchEvent('audioReady');
+                        }, 100);
                         
                         resolve();
                     })

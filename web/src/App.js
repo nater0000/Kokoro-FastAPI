@@ -27,6 +27,13 @@ export class App {
         this.playerState = new PlayerState();
         this.audioService = new AudioService();
         this.voiceService = new VoiceService();
+        
+        // Set up visual debugging for iOS Safari
+        this.audioService.setDebugCallback((message) => {
+            console.log('DEBUG:', message);
+            // Show debug messages in status for 3 seconds
+            this.showStatus('DEBUG: ' + message, 'info', 3000);
+        });
 
         // Initialize components
         this.playerControls = new PlayerControls(this.audioService, this.playerState);
@@ -127,12 +134,12 @@ export class App {
         });
     }
 
-    showStatus(message, type = 'info') {
+    showStatus(message, type = 'info', timeout = 5000) {
         this.elements.status.textContent = message;
         this.elements.status.className = 'status ' + type;
         setTimeout(() => {
             this.elements.status.className = 'status';
-        }, 5000);
+        }, timeout);
     }
 
     setGenerating(isGenerating) {
@@ -226,5 +233,5 @@ export class App {
 
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    new App();
+    window.app = new App();
 });

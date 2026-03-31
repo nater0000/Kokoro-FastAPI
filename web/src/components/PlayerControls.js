@@ -58,10 +58,27 @@ export class PlayerControls {
     setupEventListeners() {
         // Play/Pause button
         this.elements.playPauseBtn.addEventListener('click', () => {
-            if (this.audioService.isPlaying()) {
+            const isDisabled = this.elements.playPauseBtn.disabled;
+            const isPlaying = this.audioService.isPlaying();
+            
+            // Show debug info in status
+            if (window.app && window.app.showStatus) {
+                window.app.showStatus(`Play clicked - Disabled: ${isDisabled}, Playing: ${isPlaying}`, 'info', 2000);
+            }
+            
+            console.log('PlayerControls: Play button clicked, disabled:', isDisabled, 'playing:', isPlaying);
+            
+            if (isPlaying) {
+                console.log('PlayerControls: Pausing audio');
                 this.audioService.pause();
             } else {
-                this.audioService.play();
+                console.log('PlayerControls: Playing audio');
+                // For iOS Safari, try direct audio element access as fallback
+                if (this.audioService.fallbackMode && this.audioService.audio) {
+                    this.directPlay();
+                } else {
+                    this.audioService.play();
+                }
             }
         });
 
@@ -103,21 +120,59 @@ export class PlayerControls {
             this.stopTimeUpdate();
         });
     }
+    
+    // Direct play method for iOS Safari fallback
+    directPlay() {
+        if (!this.audioService.audio) {
+            console.error('PlayerControls: No audio element available');
+            return;
+        }
+        
+        const audio = this.audioService.audio;
+        console.log('PlayerControls: Direct play attempt, readyState:', audio.readyState);
+        
+        if (window.app && window.app.showStatus) {
+            window.app.showStatus(`Direct play - ReadyState: ${audio.readyState}`, 'info', 2000);
+        }
+        
+        const playPromise = audio.play();
+        if (playPromise) {
+            playPromise
+                .then(() => {
+                    console.log('PlayerControls: Direct play successful');
+                    this.elements.playPauseBtn.textContent = 'Pause';
+                    this.playerState.setPlaying(true);
+                    this.startTimeUpdate();
+                    if (window.app && window.app.showStatus) {
+                        window.app.showStatus('Playback started', 'success', 2000);
+                    }
+                })
+                .catch(error => {
+                    console.error('PlayerControls: Direct play failed:', error);
+                    if (window.app && window.app.showStatus) {
+                        window.app.showStatus('Play failed: ' + error.name, 'error', 3000);
+                    }
+                });
+        }
+    }
 
     setupAudioEvents() {
         this.audioService.addEventListener('play', () => {
+            console.log('PlayerControls: Play event received');
             this.elements.playPauseBtn.textContent = 'Pause';
             this.playerState.setPlaying(true);
             this.startTimeUpdate();
         });
 
         this.audioService.addEventListener('pause', () => {
+            console.log('PlayerControls: Pause event received');
             this.elements.playPauseBtn.textContent = 'Play';
             this.playerState.setPlaying(false);
             this.stopTimeUpdate();
         });
 
         this.audioService.addEventListener('ended', () => {
+            console.log('PlayerControls: Ended event received');
             this.elements.playPauseBtn.textContent = 'Play';
             this.playerState.setPlaying(false);
             this.stopTimeUpdate();
@@ -142,6 +197,12 @@ export class PlayerControls {
             this.updateControls(this.playerState.getState());
         });
 
+        // Handle custom audio ready event for iOS Safari
+        this.audioService.addEventListener('audioReady', () => {
+            console.log('PlayerControls: Audio ready event received');
+            this.updateControls(this.playerState.getState());
+        });
+
         // Initial time display
         this.updateTimeDisplay();
     }
@@ -153,9 +214,19 @@ export class PlayerControls {
     updateControls(state) {
         // Update button states - enable play button if audio is loaded or generating
         const hasAudio = this.audioService.audio && this.audioService.audio.src && !this.audioService.audio.error;
+        const wasDisabled = this.elements.playPauseBtn.disabled;
         this.elements.playPauseBtn.disabled = !hasAudio && !state.isGenerating;
         this.elements.seekSlider.disabled = !state.duration;
         this.elements.cancelBtn.style.display = state.isGenerating ? 'block' : 'none';
+        
+        console.log('PlayerControls: updateControls called', {
+            hasAudio,
+            audioSrc: this.audioService.audio?.src,
+            audioError: this.audioService.audio?.error,
+            isGenerating: state.isGenerating,
+            playButtonDisabled: this.elements.playPauseBtn.disabled,
+            wasDisabled
+        });
         
         // Update volume and speed if changed externally
         if (this.elements.volumeSlider.value !== state.volume * 100) {
