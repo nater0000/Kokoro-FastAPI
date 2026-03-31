@@ -21,6 +21,12 @@ export class AudioService {
         
         // Visual debugging
         this.debugCallback = null; // Callback to show status messages
+        
+        // iOS Safari autoplay priming - do this once on initialization
+        this.primedForAutoplay = false; // Track if we've primed audio context
+        
+        // Prime audio context immediately for iOS Safari autoplay
+        this.primeAudioContext();
     }
     
     // Method to set debug callback for visual feedback
@@ -35,10 +41,31 @@ export class AudioService {
             this.debugCallback(message);
         }
     }
+    
+    // Prime audio context for iOS Safari autoplay
+    primeAudioContext() {
+        if (this.primedForAutoplay) {
+            return;
+        }
+        
+        this.debug('Priming audio context for iOS Safari autoplay');
+        
+        // Create a silent audio element to establish user interaction context
+        const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAQAEAAEAfAAAQAQABAAgAZGF0YQAAAAA=');
+        silentAudio.volume = 0;
+        silentAudio.play().then(() => {
+            this.debug('Audio context primed successfully');
+            this.primedForAutoplay = true;
+            silentAudio.pause();
+            silentAudio.src = '';
+        }).catch(error => {
+            this.debug('Audio context priming failed: ' + error.name);
+        });
+    }
 
     async streamAudio(text, voice, speed, onProgress) {
         try {
-            console.log('AudioService: Starting stream...', { text, voice, speed });
+            this.debug('Starting stream...', { text, voice, speed });
             
             if (this.controller) {
                 this.controller.abort();
@@ -162,16 +189,40 @@ export class AudioService {
                         this.audio.addEventListener('loadeddata', () => {
                             this.debug('Audio data loaded, readyState: ' + this.audio.readyState);
                             this.dispatchEvent('loadeddata');
+                            
+                            // Try auto-play on loadeddata for iOS Safari
+                            if (this.shouldAutoplay) {
+                                this.debug('Attempting auto-play on loadeddata');
+                                setTimeout(() => {
+                                    this.play();
+                                }, 100);
+                            }
                         });
                         
                         this.audio.addEventListener('loadedmetadata', () => {
                             this.debug('Audio metadata loaded, duration: ' + this.audio.duration);
                             this.dispatchEvent('loadedmetadata');
+                            
+                            // Try auto-play on loadedmetadata for iOS Safari
+                            if (this.shouldAutoplay) {
+                                this.debug('Attempting auto-play on loadedmetadata');
+                                setTimeout(() => {
+                                    this.play();
+                                }, 150);
+                            }
                         });
                         
                         this.audio.addEventListener('canplay', () => {
                             this.debug('Audio can be played');
                             this.dispatchEvent('canplay');
+                            
+                            // Auto-play for iOS Safari fallback mode
+                            if (this.shouldAutoplay) {
+                                this.debug('Attempting auto-play in fallback mode');
+                                setTimeout(() => {
+                                    this.play();
+                                }, 200); // Slightly longer delay for iOS Safari
+                            }
                         });
                         
                         this.audio.addEventListener('error', (e) => {
@@ -440,27 +491,31 @@ export class AudioService {
 
     play() {
         if (this.audio && this.audio.readyState >= 2 && !this.audio.error) {
-            console.log('AudioService: Attempting to play audio');
+            this.debug('Attempting to play audio');
             const playPromise = this.audio.play();
             if (playPromise) {
                 playPromise
                     .then(() => {
-                        console.log('AudioService: Playback started successfully');
+                        this.debug('Playback started successfully');
                         this.dispatchEvent('play');
                     })
                     .catch(error => {
-                        console.error('AudioService: Playback failed:', error);
+                        this.debug('Playback failed: ' + error.name + ' - ' + error.message);
                         if (error.name !== 'AbortError') {
                             // For iOS Safari, we might need user interaction
-                            console.log('AudioService: This might require user interaction on iOS Safari');
+                            this.debug('This might require user interaction on iOS Safari');
+                            if (this.shouldAutoplay) {
+                                this.debug('Auto-play blocked - user interaction required');
+                            }
                         }
                     });
             } else {
                 // Some browsers don't return a promise
+                this.debug('Playback started (no promise returned)');
                 this.dispatchEvent('play');
             }
         } else {
-            console.warn('AudioService: Cannot play - audio not ready', {
+            this.debug('Cannot play - audio not ready', {
                 hasAudio: !!this.audio,
                 readyState: this.audio?.readyState,
                 error: this.audio?.error
@@ -561,6 +616,7 @@ export class AudioService {
         // Cleanup fallback mode resources
         this.audioChunks = [];
         this.fallbackMode = false;
+        this.primedForAutoplay = false; // Reset priming state
         this.serverDownloadPath = null;
         this.pendingOperations = [];
     }
@@ -596,6 +652,7 @@ export class AudioService {
         // Cleanup fallback mode resources
         this.audioChunks = [];
         this.fallbackMode = false;
+        this.primedForAutoplay = false; // Reset priming state
         this.serverDownloadPath = null;
         this.pendingOperations = [];
     }
