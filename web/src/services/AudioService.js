@@ -13,6 +13,11 @@ export class AudioService {
         this.CHARS_PER_CHUNK = 150; // Estimated chars per chunk
         this.serverDownloadPath = null; // Server-side download path
         this.pendingOperations = []; // Queue for buffer operations
+        
+        // iOS Safari compatibility
+        this.isMediaSourceSupported = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg');
+        this.audioChunks = []; // Fallback for iOS Safari
+        this.fallbackMode = false; // Track if we're using fallback mode
     }
 
     async streamAudio(text, voice, speed, onProgress) {
@@ -80,35 +85,115 @@ export class AudioService {
 
     async setupAudioStream(stream, response, onProgress, estimatedChunks) {
         this.audio = new Audio();
-        this.mediaSource = new MediaSource();
-        this.audio.src = URL.createObjectURL(this.mediaSource);
         
-        // Monitor for audio element errors
-        this.audio.addEventListener('error', (e) => {
-            console.error('Audio error:', this.audio.error);
-        });
-
-        this.audio.addEventListener('ended', () => {
-            this.dispatchEvent('ended');
-        });
-
-        return new Promise((resolve, reject) => {
-            this.mediaSource.addEventListener('sourceopen', async () => {
-                try {
-                    this.sourceBuffer = this.mediaSource.addSourceBuffer('audio/mpeg');
-                    this.sourceBuffer.mode = 'sequence';
-                    
-                    this.sourceBuffer.addEventListener('updateend', () => {
-                        this.processNextOperation();
-                    });
-                    
-                    await this.processStream(stream, response, onProgress, estimatedChunks);
-                    resolve();
-                } catch (error) {
-                    reject(error);
-                }
+        // Check if MediaSource is supported (not available in iOS Safari)
+        if (this.isMediaSourceSupported) {
+            console.log('AudioService: Using MediaSource API');
+            this.mediaSource = new MediaSource();
+            this.audio.src = URL.createObjectURL(this.mediaSource);
+            
+            // Monitor for audio element errors
+            this.audio.addEventListener('error', (e) => {
+                console.error('Audio error:', this.audio.error);
             });
-        });
+
+            this.audio.addEventListener('ended', () => {
+                this.dispatchEvent('ended');
+            });
+
+            return new Promise((resolve, reject) => {
+                this.mediaSource.addEventListener('sourceopen', async () => {
+                    try {
+                        this.sourceBuffer = this.mediaSource.addSourceBuffer('audio/mpeg');
+                        this.sourceBuffer.mode = 'sequence';
+                        
+                        this.sourceBuffer.addEventListener('updateend', () => {
+                            this.processNextOperation();
+                        });
+                        
+                        await this.processStream(stream, response, onProgress, estimatedChunks);
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            });
+        } else {
+            // Fallback mode for iOS Safari
+            console.log('AudioService: Using fallback mode for iOS Safari');
+            this.fallbackMode = true;
+            this.audioChunks = [];
+            
+            return new Promise((resolve, reject) => {
+                // Process stream and collect chunks
+                this.processStreamFallback(stream, response, onProgress, estimatedChunks)
+                    .then(() => {
+                        // Create blob from collected chunks
+                        const blob = new Blob(this.audioChunks, { type: 'audio/mpeg' });
+                        const audioUrl = URL.createObjectURL(blob);
+                        this.audio.src = audioUrl;
+                        
+                        this.audio.addEventListener('ended', () => {
+                            this.dispatchEvent('ended');
+                        });
+                        
+                        this.audio.addEventListener('loadeddata', () => {
+                            if (this.shouldAutoplay) {
+                                this.play();
+                            }
+                        });
+                        
+                        resolve();
+                    })
+                    .catch(reject);
+            });
+        }
+    }
+
+    async processStreamFallback(stream, response, onProgress, estimatedChunks) {
+        const reader = stream.getReader();
+        let receivedChunks = 0;
+
+        try {
+            while (true) {
+                const {value, done} = await reader.read();
+                
+                if (done) {
+                    // Get final download path from header after stream is complete
+                    const headers = Object.fromEntries(response.headers.entries());
+                    console.log('Response headers at stream end:', headers);
+                    
+                    const downloadPath = headers['x-download-path'];
+                    if (downloadPath) {
+                        // Use config to prepend root path and /v1
+                        this.serverDownloadPath = await config.getApiUrl(`/v1${downloadPath}`);
+                        console.log('Download path received:', this.serverDownloadPath);
+                    } else {
+                        console.warn('No X-Download-Path header found. Available headers:',
+                            Object.keys(headers).join(', '));
+                    }
+
+                    // Signal completion
+                    onProgress?.(estimatedChunks, estimatedChunks);
+                    this.dispatchEvent('complete');
+                    
+                    setTimeout(() => {
+                        this.dispatchEvent('downloadReady');
+                    }, 800);
+                    return;
+                }
+
+                receivedChunks++;
+                onProgress?.(receivedChunks, estimatedChunks);
+
+                // In fallback mode, just collect chunks
+                this.audioChunks.push(value);
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                throw error;
+            }
+        }
     }
 
     async processStream(stream, response, onProgress, estimatedChunks) {
@@ -415,6 +500,10 @@ export class AudioService {
             this.sourceBuffer.removeEventListener("updateerror", () => {});
             this.sourceBuffer = null;
         }
+        
+        // Cleanup fallback mode resources
+        this.audioChunks = [];
+        this.fallbackMode = false;
         this.serverDownloadPath = null;
         this.pendingOperations = [];
     }
@@ -446,6 +535,10 @@ export class AudioService {
             this.sourceBuffer.removeEventListener("updateerror", () => {});
             this.sourceBuffer = null;
         }
+        
+        // Cleanup fallback mode resources
+        this.audioChunks = [];
+        this.fallbackMode = false;
         this.serverDownloadPath = null;
         this.pendingOperations = [];
     }
