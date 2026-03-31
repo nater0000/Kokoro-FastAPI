@@ -123,6 +123,25 @@ export class PlayerControls {
             this.stopTimeUpdate();
         });
 
+        // Handle when audio data is loaded (especially for iOS Safari fallback)
+        this.audioService.addEventListener('loadeddata', () => {
+            console.log('PlayerControls: Audio data loaded');
+            this.updateControls(this.playerState.getState());
+        });
+
+        // Handle when audio metadata is loaded (duration available)
+        this.audioService.addEventListener('loadedmetadata', () => {
+            console.log('PlayerControls: Audio metadata loaded');
+            this.updateTimeDisplay();
+            this.updateControls(this.playerState.getState());
+        });
+
+        // Handle when audio can be played
+        this.audioService.addEventListener('canplay', () => {
+            console.log('PlayerControls: Audio can be played');
+            this.updateControls(this.playerState.getState());
+        });
+
         // Initial time display
         this.updateTimeDisplay();
     }
@@ -132,8 +151,9 @@ export class PlayerControls {
     }
 
     updateControls(state) {
-        // Update button states
-        this.elements.playPauseBtn.disabled = !state.duration && !state.isGenerating;
+        // Update button states - enable play button if audio is loaded or generating
+        const hasAudio = this.audioService.audio && this.audioService.audio.src && !this.audioService.audio.error;
+        this.elements.playPauseBtn.disabled = !hasAudio && !state.isGenerating;
         this.elements.seekSlider.disabled = !state.duration;
         this.elements.cancelBtn.style.display = state.isGenerating ? 'block' : 'none';
         

@@ -138,9 +138,25 @@ export class AudioService {
                         });
                         
                         this.audio.addEventListener('loadeddata', () => {
+                            // Audio is ready to play - update player state
+                            this.dispatchEvent('loadeddata');
+                            
                             if (this.shouldAutoplay) {
-                                this.play();
+                                // Add a small delay for iOS Safari compatibility
+                                setTimeout(() => {
+                                    this.play();
+                                }, 100);
                             }
+                        });
+                        
+                        this.audio.addEventListener('loadedmetadata', () => {
+                            // Metadata is loaded - duration is available
+                            this.dispatchEvent('loadedmetadata');
+                        });
+                        
+                        this.audio.addEventListener('canplay', () => {
+                            // Audio can be played
+                            this.dispatchEvent('canplay');
                         });
                         
                         resolve();
@@ -399,15 +415,31 @@ export class AudioService {
 
     play() {
         if (this.audio && this.audio.readyState >= 2 && !this.audio.error) {
+            console.log('AudioService: Attempting to play audio');
             const playPromise = this.audio.play();
             if (playPromise) {
-                playPromise.catch(error => {
-                    if (error.name !== 'AbortError') {
-                        console.error('Playback error:', error);
-                    }
-                });
+                playPromise
+                    .then(() => {
+                        console.log('AudioService: Playback started successfully');
+                        this.dispatchEvent('play');
+                    })
+                    .catch(error => {
+                        console.error('AudioService: Playback failed:', error);
+                        if (error.name !== 'AbortError') {
+                            // For iOS Safari, we might need user interaction
+                            console.log('AudioService: This might require user interaction on iOS Safari');
+                        }
+                    });
+            } else {
+                // Some browsers don't return a promise
+                this.dispatchEvent('play');
             }
-            this.dispatchEvent('play');
+        } else {
+            console.warn('AudioService: Cannot play - audio not ready', {
+                hasAudio: !!this.audio,
+                readyState: this.audio?.readyState,
+                error: this.audio?.error
+            });
         }
     }
 
